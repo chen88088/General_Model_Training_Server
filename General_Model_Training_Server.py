@@ -37,6 +37,8 @@ import json
 import hashlib
 
 logging.basicConfig(level=logging.DEBUG)
+DVC_REPO = "https://github.com/chen88088/car-insurance-dataset.git"
+
 
 SERVER_MANAGER_URL = "http://10.52.52.136:8000"
 
@@ -88,11 +90,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# # PVC 掛載路徑
-# STORAGE_PATH = "/mnt/storage"
+# PVC 掛載路徑
+STORAGE_PATH = "/mnt/storage"
 
-# PVC 掛載路徑 (本地測試用)
-STORAGE_PATH = "/mnt/storage/test/test_general"
+# # PVC 掛載路徑 (本地測試用)
+# STORAGE_PATH = "/mnt/storage/test/test_general"
 
 
 
@@ -114,14 +116,16 @@ class DagRequest(BaseModel):
     TASK_STAGE_TYPE: str
     DATASET_NAME: str
     DATASET_VERSION: str
+    DATASET_DVCFILE_REPO: str
     CODE_REPO_URL: Dict[str, str]
     IMAGE_NAME: Dict[str, str]
+    EXECUTION_SCRIPTS: Dict[str, List[str]]
+    UPLOAD_MLFLOW_SCRIPT: Dict[str, str]
     MODEL_NAME: str
     MODEL_VERSION: str
     DEPLOYER_NAME: str
     DEPLOYER_EMAIL: str
     PIPELINE_CONFIG: Dict[str, Any]
-
 
 # 檢查 PVC 是否已掛載
 def is_pvc_mounted():
@@ -171,7 +175,7 @@ async def health_check():
 
 # =========================
 # PVC 掛載路徑
-STORAGE_PATH = "/mnt/storage"
+# STORAGE_PATH = "/mnt/storage"
 CODE_PATH = os.path.join(STORAGE_PATH, "code")
 DATASET_PATH = os.path.join(STORAGE_PATH, "dataset")
 MODEL_PATH = os.path.join(STORAGE_PATH, "model")
@@ -216,9 +220,9 @@ async def register_dag_and_logger_and_dvc_worker(request: DagRequest):
     if not dag_id or not execution_id:
         raise HTTPException(status_code=400, detail="DAG_ID and EXECUTION_ID are required.")
     
-    # # 檢查 PVC 掛載狀態
-    # if not is_pvc_mounted():
-    #     raise HTTPException(status_code=500, detail="PVC is not mounted.")
+    # 檢查 PVC 掛載狀態
+    if not is_pvc_mounted():
+        raise HTTPException(status_code=500, detail="PVC is not mounted.")
 
     # 組合路徑：/mnt/storage/{dag_id}_{execution_id}
     dag_root_folder_path = os.path.join(STORAGE_PATH, f"{dag_id}_{execution_id}")
@@ -277,14 +281,14 @@ async def Download_Code_Repo(request: DagRequest):
     dvc_worker = dvc_manager.get_worker(dag_id, execution_id)
     
     
-    # # 檢查 PVC 掛載狀態
-    # if not is_pvc_mounted():
-    #     raise HTTPException(status_code=500, detail="PVC is not mounted.")
-    # logger.info("PVC IS MOUNTED!!!!")
+    # 檢查 PVC 掛載狀態
+    if not is_pvc_mounted():
+        raise HTTPException(status_code=500, detail="PVC is not mounted.")
+    logger.info("PVC IS MOUNTED!!!!")
 
     # 組合路徑：/mnt/storage/{dag_id}_{execution_id}
     dag_root_folder_path = os.path.join(STORAGE_PATH, f"{dag_id}_{execution_id}")
-    repo_training_path = os.path.join(dag_root_folder_path, "code")
+    repo_training_path = os.path.join(dag_root_folder_path, "CODE")
 
     # 確認 DAG 根目錄是否存在
     if not os.path.exists(dag_root_folder_path):
@@ -326,7 +330,7 @@ async def Download_Code_Repo(request: DagRequest):
                 raise Exception("git clone failed")
             
             # 驗證是否成功 clone
-            assert os.path.exists(repo_training_path), "Repo NCURSS-Training clone failed"
+            assert os.path.exists(repo_training_path), "Repo Training Code clone failed"
             logger.info(f"Cloned NCURSS-Training repo to {repo_training_path}")
         else:
             logger.info(f"NCURSS-Training repo already exists at {repo_training_path}")
@@ -349,6 +353,7 @@ async def download_dataset(request: DagRequest):
     """
     dag_id = request.DAG_ID
     execution_id = request.EXECUTION_ID
+    dataset_dvcfile_repo = request.DATASET_DVCFILE_REPO
 
     if not dag_id or not execution_id:
         raise HTTPException(status_code=400, detail="DAG_ID and EXECUTION_ID are required.")
@@ -358,38 +363,70 @@ async def download_dataset(request: DagRequest):
     if logger:
         logger_manager.log_section_header(logger, "Training/DownloadDataset")
 
-    dvc_worker = dvc_manager.get_worker(dag_id, execution_id)
-    
-    # # 檢查 PVC 掛載狀態
-    # if not is_pvc_mounted():
-    #     raise HTTPException(status_code=500, detail="PVC is not mounted.")
+    # 檢查 PVC 掛載狀態
+    if not is_pvc_mounted():
+        raise HTTPException(status_code=500, detail="PVC is not mounted.")
 
-    # 組合路徑：/mnt/storage/{dag_id}_{execution_id}/NCU-RSS-1.5/data
-    target_folder = os.path.join(STORAGE_PATH, f"{dag_id}_{execution_id}", "code", "data")
+    # 組合路徑：/mnt/storage/{dag_id}_{execution_id}/data
+    target_folder = os.path.join(STORAGE_PATH, f"{dag_id}_{execution_id}", "DATA")
     create_folder_if_not_exists(target_folder)
 
     try:
+
+        # 取得環境變數中的 GITHUB_TOKEN
+        github_token = os.getenv("GITHUB_TOKEN") 
+        if not github_token:
+            raise Exception("GITHUB_TOKEN not found in environment variables.")
+
+        # Step 1: clone DVC repo 到 /mnt/storage/{dag_id}_{execution_id}/DATA/
+        # 使用 subprocess.run() 執行 git clone 指令
+        # **修正：直接內嵌 GITHUB_TOKEN 到 URL 中**
+        # repo_url = f"https://{github_token}:x-oauth-basic@github.com/chen88088/NCU-RSS-1.5.git"
+        dataset_dvcfile_repo_url = dataset_dvcfile_repo.replace("https://", f"https://{github_token}:x-oauth-basic@")
+        clone_command = ["git", "clone", dataset_dvcfile_repo_url, target_folder]
+        subprocess.run(clone_command, capture_output=True, text=True)
+
+        # Step 2: 在該資料夾下執行 dvc pull
+        subprocess.run(["dvc", "pull"], cwd=target_folder, check=True)
+
+        # Step 3: 搬檔案出來
+        def flatten_nested_data_folder(target_folder: str):
+            nested_data_path = os.path.join(target_folder, "DATA")
+
+            if os.path.isdir(nested_data_path):
+                temp_path = os.path.join(os.path.dirname(target_folder), "__temp_data")
+                os.rename(nested_data_path, temp_path)
+                shutil.rmtree(target_folder)  # 此時 target_folder 沒有檔案了
+                os.rename(temp_path, target_folder)
+        
+        flatten_nested_data_folder(target_folder)
+
+        logger.info(f"DVC dataset pulled into: {target_folder}")
+        return {
+            "status": "success",
+            "message": f"Dataset downloaded to {target_folder}"
+        }
         
 
-        # 初始化 MinIO 客戶端
-        minio_client = dvc_worker.init_minio_client()
-        logger.info("MinIO Client Initialization Succesffully")
+        # # 初始化 MinIO 客戶端
+        # minio_client = dvc_worker.init_minio_client()
+        # logger.info("MinIO Client Initialization Succesffully")
 
-        # 1. 下載 dvc_file 中的 result.dvc
-        dvc_worker.download_dvc_file(minio_client, target_folder)
-        logger.info("Dataset .dvc File download successfully")
+        # # 1. 下載 dvc_file 中的 result.dvc
+        # dvc_worker.download_dvc_file(minio_client, target_folder)
+        # logger.info("Dataset .dvc File download successfully")
 
-        # 2. 使用 DVC Pull 下載 dataset
-        dvc_worker.download_dataset_with_dvc(target_folder)
-        logger.info("Download Dataset with .dvc file successfully")
-        # 3. 下載 excel_file 資料夾
-        dvc_worker.download_excel_files(minio_client, target_folder)
-        logger.info("Download Excel Files successfully")
-        # **4. 重組資料夾結構**
-        dvc_worker.reorganize_data_folder(target_folder)
-        logger.info("Download Excel Files successfully")
+        # # 2. 使用 DVC Pull 下載 dataset
+        # dvc_worker.download_dataset_with_dvc(target_folder)
+        # logger.info("Download Dataset with .dvc file successfully")
+        # # 3. 下載 excel_file 資料夾
+        # dvc_worker.download_excel_files(minio_client, target_folder)
+        # logger.info("Download Excel Files successfully")
+        # # **4. 重組資料夾結構**
+        # dvc_worker.reorganize_data_folder(target_folder)
+        # logger.info("Download Excel Files successfully")
 
-        logger.info(f"Dataset and Excel files downloaded to {target_folder}")
+        # logger.info(f"Dataset and Excel files downloaded to {target_folder}")
 
         return {"status": "success", "message": f"Dataset and Excel files downloaded to {target_folder}"}
 
@@ -398,11 +435,45 @@ async def download_dataset(request: DagRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
     
-# [Training/ModifyConfig]
-@app.post("/Training/ModifyConfig")
-async def modify_config(request: DagRequest):
-    # pass
-    return {"status": "success", "message": f"Config Mofification Successfully!!"}
+@app.post("/Training/AddConfig")
+async def add_config(request: DagRequest):
+    dag_id = request.DAG_ID
+    execution_id = request.EXECUTION_ID
+    pipeline_config = request.PIPELINE_CONFIG
+
+    if not dag_id or not execution_id:
+        raise HTTPException(status_code=400, detail="DAG_ID and EXECUTION_ID are required.")
+    
+    if not pipeline_config or not isinstance(pipeline_config, dict):
+        raise HTTPException(status_code=400, detail="PIPELINE_CONFIG must be provided as a dict.")
+
+    logger = logger_manager.get_logger(dag_id, execution_id)
+    if logger:
+        logger_manager.log_section_header(logger, "Training/AddConfig")
+    
+    if not is_pvc_mounted():
+        raise HTTPException(status_code=500, detail="PVC is not mounted.")
+
+    config_dir = os.path.join(STORAGE_PATH, f"{dag_id}_{execution_id}", "CONFIG")
+    create_folder_if_not_exists(config_dir)
+
+    logger.info(f"CONFIG folder created!!: {config_dir}")
+
+    config_path = os.path.join(config_dir, "config.yaml")
+
+    try:
+        with open(config_path, "w") as f:
+            yaml.dump(pipeline_config, f, default_flow_style=False)
+
+        logger.info(f"Config file saved to: {config_path}")
+        return {
+            "status": "success",
+            "message": f"Config created at {config_path}"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to write config: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 # [Training/ExecuteTrainingScripts]
 @app.post("/Training/ExecuteTrainingScripts")
@@ -423,6 +494,9 @@ async def execute_training_scripts(request: DagRequest):
     logger = logger_manager.get_logger(dag_id, execution_id)
     if logger:
         logger_manager.log_section_header(logger, "Training/ExecuteTrainingScripts")
+
+    output_dir = os.path.join(STORAGE_PATH, f"{dag_id}_{execution_id}", "OUTPUT")
+    create_folder_if_not_exists(output_dir)
     
 
     # v1 = init_k8s_client()
@@ -448,14 +522,17 @@ async def execute_training_scripts(request: DagRequest):
         raise HTTPException(status_code=500, detail="PVC_NAME not set in environment variables")
     
     # 組合工作目錄
-    working_dir = f"/mnt/storage/{dag_id}_{execution_id}/code"
+    working_dir = f"/mnt/storage/{dag_id}_{execution_id}/CODE"
     
     # 定義要執行的腳本
-    scripts_to_run = [
-        "python3 kmeans_cluster_for_train_test.py",
-        "python3 random_sampling_for_parcel_dataset_for_train_test.py",
-        "python3 train_and_val_model_with_excel.py"
-    ]
+    # 從 SCRIPTS 中抓取該階段要執行的 script list
+    script_filenames = request.EXECUTION_SCRIPTS.get(task_stage_type)
+    if not script_filenames:
+        raise HTTPException(status_code=400, detail=f"No scripts found for TASK_STAGE_TYPE: {task_stage_type}")
+
+    # 自動加上 python3 執行前綴
+    scripts_to_run = [f"python3 {script}" for script in script_filenames]
+
 
     # 組合成 Command
     command = " && ".join([f"cd {working_dir}"] + scripts_to_run )
@@ -568,102 +645,50 @@ def wait_for_job_completion(batch_v1, job_name, namespace, logger, timeout=3600)
         time.sleep(10)  # 每 10 秒檢查一次 Job 狀態
 
 
-def record_mlflow(request: DagRequest, output_dir: str):
-    """ 記錄執行結果到 MLflow """
-    os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID", "default-key")
-    os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY", "default-secret")
-    os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://localhost:9000")
-
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
-    mlflow.set_experiment(request.DAG_ID)
-    dag_instance_unique_id = f'{request.DAG_ID}_{request.EXECUTION_ID}'
-
-    with mlflow.start_run(run_name=dag_instance_unique_id):
-        # 記錄 Request Body 為 Tags
-        mlflow.set_tags(request.model_dump())
-        
-        # 讀取 Excel 內容
-        excel_path = os.path.join(output_dir, "training_results.xlsx")
-        df_params = pd.read_excel(excel_path, sheet_name="Parameters")
-        df_metrics = pd.read_excel(excel_path, sheet_name="Metrics")
-        
-        # 記錄 Parameters
-        params = df_params.iloc[0].to_dict()
-        for key, value in params.items():
-            mlflow.log_param(key, value)
-        
-        # 記錄 Metrics
-        for index, row in df_metrics.iterrows():
-            mlflow.log_metrics({
-                "train_accuracy": row["train_accuracy"],
-                "val_accuracy": row["val_accuracy"],
-                "train_loss": row["train_loss"],
-                "val_loss": row["val_loss"],
-                "train_kappa": row["train_kappa"],
-                "val_kappa": row["val_kappa"]
-            }, step=index)
-        
-        # 上傳 Artifact
-        mlflow.log_artifact(os.path.join(output_dir, "final_weight.h5"))
-        mlflow.log_artifact(os.path.join(output_dir, "model.h5"))
-        mlflow.log_artifact(os.path.join(output_dir, "model_val_acc.h5"))
-        mlflow.log_artifact(os.path.join(output_dir, "val_acc.png"))
-        mlflow.log_artifact(excel_path)
-
-@app.post("/upload_mlflow")
+@app.post("/Training/upload_mlflow")
 def upload_mlflow(request: DagRequest):
     dag_id = request.DAG_ID
     execution_id = request.EXECUTION_ID
     task_stage_type = request.TASK_STAGE_TYPE
 
-    # 從 IMAGE_NAME 中抓取對應的 Image
-    image_name = request.IMAGE_NAME.get(task_stage_type)
-    if not image_name:
-        raise HTTPException(status_code=400, detail=f"No image found for TASK_STAGE_TYPE: {task_stage_type}")
-    
-    # 獲取 Logger 和 DVCWorker
     logger = logger_manager.get_logger(dag_id, execution_id)
     if logger:
-        logger_manager.log_section_header(logger, "Training/ExecuteTrainingScripts")
+        logger_manager.log_section_header(logger, "Training/upload_mlflow")
 
-    # 組合工作目錄
-    working_dir = f"/mnt/storage/{dag_id}_{execution_id}/code"
-    output_dir = f"{working_dir}/data/train_test/For_training_testing/320x320/train_test"
+    upload_mlflow_script_filename = request.UPLOAD_MLFLOW_SCRIPT.get(task_stage_type)
+    if not upload_mlflow_script_filename:
+        raise HTTPException(status_code=400, detail=f"No script filename for TASK_STAGE_TYPE: {task_stage_type}")
 
-    os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID", "default-key")
-    os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY", "default-secret")
-    os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://localhost:9000")
+    working_dir = f"/mnt/storage/{dag_id}_{execution_id}"
 
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
-    mlflow.set_experiment(dag_id)
-    run_name = f"{dag_id}_{execution_id}"
+    # 找到 code repo 中的 upload_mlflow script
+    script_path = os.path.join(working_dir, "CODE" , "upload_mlflow", upload_mlflow_script_filename)
+    if not os.path.exists(script_path):
+        raise HTTPException(status_code=404, detail=f"Script not found at path: {script_path}")
+    
+    logger.info(f"upload mlflow script found: {script_path}")
 
-    with mlflow.start_run(run_name=run_name):
-        excel_path = os.path.join(output_dir, "training_results.xlsx")
-        df_params = pd.read_excel(excel_path, sheet_name="Parameters")
-        df_metrics = pd.read_excel(excel_path, sheet_name="Metrics")
+    experiment_name = dag_id
+    experiment_run_name = f'{dag_id}_{execution_id}'
 
-        params = df_params.iloc[0].to_dict()
-        for key, value in params.items():
-            mlflow.log_param(key, value)
+    # 把關鍵資訊傳進腳本，剩下都由腳本內部自行處理
+    command = [
+        "python3", script_path,
+        experiment_name,
+        experiment_run_name
+    ]
 
-        for index, row in df_metrics.iterrows():
-            mlflow.log_metrics({
-                "train_accuracy": row["train_accuracy"],
-                "val_accuracy": row["val_accuracy"],
-                "train_loss": row["train_loss"],
-                "val_loss": row["val_loss"],
-                "train_kappa": row["train_kappa"],
-                "val_kappa": row["val_kappa"]
-            }, step=index)
+    result = subprocess.run(command, capture_output=True, text=True)
 
-        mlflow.log_artifact(os.path.join(output_dir, "final_weight.h5"))
-        mlflow.log_artifact(os.path.join(output_dir, "model.h5"))
-        mlflow.log_artifact(os.path.join(output_dir, "model_val_acc.h5"))
-        mlflow.log_artifact(os.path.join(output_dir, "val_acc.png"))
-        mlflow.log_artifact(excel_path)
-
-    return {"status": "success", "message": "MLflow upload complete"}
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"Script failed: {result.stderr}")
+    
+    logger.info(f"upload mlflow execution successfully !!!")
+    
+    return {
+        "status": "success",
+        "stdout": result.stdout
+    }
 
 # [Training/UploadLogToS3]
 @app.post("/Training/UploadLogToS3")
@@ -688,7 +713,6 @@ async def upload_log_to_s3(request: DagRequest):
 
     try:
         
-
         # Log 檔案路徑
         log_file_path = logs_folder_path / f"{dag_id}_{execution_id}.txt"
 

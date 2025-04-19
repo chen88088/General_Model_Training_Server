@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 設定參數
-IMAGE_NAME=ncu-rss-training-server
+IMAGE_NAME=general-model-training-server
 TAG=latest
 REGISTRY=harbor.pdc.tw/moa_ncu
 FULL_IMAGE=$REGISTRY/$IMAGE_NAME:$TAG

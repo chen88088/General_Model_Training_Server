@@ -208,9 +208,9 @@ class UploadLogRequest(BaseModel):
 
 # =========================
 
-# [Training/RegisterDag]
-@app.post("/Training/RegisterDag")
-async def register_dag_and_logger_and_dvc_worker(request: DagRequest):
+# [Training/Register_Dag]
+@app.post("/Training/Register_Dag")
+async def Register_Dag_and_logger_and_dvc_worker(request: DagRequest):
     """
     每隻 DAG 先來註冊，並生成專屬的 logger 與 DVC Worker
     """
@@ -260,9 +260,9 @@ async def register_dag_and_logger_and_dvc_worker(request: DagRequest):
     return {"status": "success", "message": f"DAG, Logger, and DVCWorker initialized for DAG_ID: {dag_id}, EXECUTION_ID: {execution_id}"}
 
 
-# [Training/Download_Code_Repo]
-@app.post("/Training/Download_Code_Repo")
-async def Download_Code_Repo(request: DagRequest):
+# [Training/Download_CodeRepo]
+@app.post("/Training/Download_CodeRepo")
+async def Download_CodeRepo(request: DagRequest):
     """
     為 Training 設定資料夾結構並 clone 相關程式碼
     """
@@ -345,9 +345,9 @@ async def Download_Code_Repo(request: DagRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # API: 下載資料集
-# [Training/DownloadDataset]
-@app.post("/Training/DownloadDataset")
-async def download_dataset(request: DagRequest):
+# [Training/Download_Dataset]
+@app.post("/Training/Download_Dataset")
+async def Download_Dataset(request: DagRequest):
     """
     從 MinIO 下載資料集至 PVC 中
     """
@@ -434,9 +434,11 @@ async def download_dataset(request: DagRequest):
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-    
-@app.post("/Training/AddConfig")
-async def add_config(request: DagRequest):
+
+# API: 下載資料集
+# [Training/Add_Config]    
+@app.post("/Training/Add_Config")
+async def Add_Config(request: DagRequest):
     dag_id = request.DAG_ID
     execution_id = request.EXECUTION_ID
     pipeline_config = request.PIPELINE_CONFIG
@@ -475,9 +477,9 @@ async def add_config(request: DagRequest):
         logger.error(f"Failed to write config: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-# [Training/ExecuteTrainingScripts]
-@app.post("/Training/ExecuteTrainingScripts")
-async def execute_training_scripts(request: DagRequest):
+# [Training/Execute_TrainingScripts]
+@app.post("/Training/Execute_TrainingScripts")
+async def Execute_TrainingScripts(request: DagRequest):
     """
     根據 TASK_STAGE_TYPE 起 Pod 並執行對應腳本
     """
@@ -644,9 +646,9 @@ def wait_for_job_completion(batch_v1, job_name, namespace, logger, timeout=3600)
             raise Exception(f"Job {job_name} failed.")
         time.sleep(10)  # 每 10 秒檢查一次 Job 狀態
 
-
-@app.post("/Training/upload_mlflow")
-def upload_mlflow(request: DagRequest):
+# [Training/Upload_ExperimentResult]
+@app.post("/Training/Upload_ExperimentResult")
+def Upload_ExperimentResult(request: DagRequest):
     dag_id = request.DAG_ID
     execution_id = request.EXECUTION_ID
     task_stage_type = request.TASK_STAGE_TYPE
@@ -690,9 +692,9 @@ def upload_mlflow(request: DagRequest):
         "stdout": result.stdout
     }
 
-# [Training/UploadLogToS3]
-@app.post("/Training/UploadLogToS3")
-async def upload_log_to_s3(request: DagRequest):
+# [Training/Upload_Log]
+@app.post("/Training/Upload_Log")
+async def Upload_Log(request: DagRequest):
     
     dag_id = request.DAG_ID
     execution_id = request.EXECUTION_ID

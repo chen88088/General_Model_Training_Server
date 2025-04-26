@@ -24,6 +24,7 @@ import yaml  # 解析 DVC 檔案
 import shutil
 import re  # 引入正則表達式套件
 from typing import Any, Dict
+from typing import Optional
 
 import mlflow
 import pandas as pd
@@ -126,6 +127,7 @@ class DagRequest(BaseModel):
     DEPLOYER_NAME: str
     DEPLOYER_EMAIL: str
     PIPELINE_CONFIG: Dict[str, Any]
+    reserved_run_id: Optional[str] = None   # ✅ 新增這行！（注意是Optional）
 
 # 檢查 PVC 是否已掛載
 def is_pvc_mounted():
@@ -652,6 +654,7 @@ def Upload_ExperimentResult(request: DagRequest):
     dag_id = request.DAG_ID
     execution_id = request.EXECUTION_ID
     task_stage_type = request.TASK_STAGE_TYPE
+    reserved_run_id = request.reserved_run_id  # 新增拿 reserved_run_id
 
     logger = logger_manager.get_logger(dag_id, execution_id)
     if logger:
@@ -662,7 +665,9 @@ def Upload_ExperimentResult(request: DagRequest):
         raise HTTPException(status_code=400, detail=f"No script filename for TASK_STAGE_TYPE: {task_stage_type}")
 
     working_dir = f"/mnt/storage/{dag_id}_{execution_id}"
-
+    # 正確找到 OUTPUT 資料夾路徑
+    output_dir = os.path.join(working_dir, "OUTPUT")
+    
     # 找到 code repo 中的 upload_mlflow script
     script_path = os.path.join(working_dir, "CODE" , "upload_mlflow", upload_mlflow_script_filename)
     if not os.path.exists(script_path):
@@ -677,10 +682,21 @@ def Upload_ExperimentResult(request: DagRequest):
     command = [
         "python3", script_path,
         experiment_name,
-        experiment_run_name
+        experiment_run_name,
+        reserved_run_id,
+        output_dir
     ]
 
+
     result = subprocess.run(command, capture_output=True, text=True)
+
+     # 把 stdout 寫進 logger
+    if result.stdout:
+        logger.info(f"[UploadMlflow STDOUT]\n{result.stdout}")
+
+    # 把 stderr 寫進 logger
+    if result.stderr:
+        logger.error(f"[UploadMlflow STDERR]\n{result.stderr}")
 
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=f"Script failed: {result.stderr}")

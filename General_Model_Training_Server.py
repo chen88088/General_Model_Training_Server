@@ -127,7 +127,7 @@ class DagRequest(BaseModel):
     DEPLOYER_NAME: str
     DEPLOYER_EMAIL: str
     PIPELINE_CONFIG: Dict[str, Any]
-    reserved_run_id: Optional[str] = None   # ✅ 新增這行！（注意是Optional）
+    reserved_exp_run_id: Optional[str] = None   # ✅ 新增這行！（注意是Optional）
 
 # 檢查 PVC 是否已掛載
 def is_pvc_mounted():
@@ -654,7 +654,7 @@ def Upload_ExperimentResult(request: DagRequest):
     dag_id = request.DAG_ID
     execution_id = request.EXECUTION_ID
     task_stage_type = request.TASK_STAGE_TYPE
-    reserved_run_id = request.reserved_run_id  # 新增拿 reserved_run_id
+    reserved_exp_run_id = request.reserved_exp_run_id  # 新增拿 reserved_run_id
 
     logger = logger_manager.get_logger(dag_id, execution_id)
     if logger:
@@ -683,7 +683,7 @@ def Upload_ExperimentResult(request: DagRequest):
         "python3", script_path,
         experiment_name,
         experiment_run_name,
-        reserved_run_id,
+        reserved_exp_run_id,
         output_dir
     ]
 
